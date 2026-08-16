@@ -7,12 +7,14 @@ import 'package:bulk_order_frontend/features/shared/data/api_repository.dart';
 import 'package:bulk_order_frontend/shared/widgets/app_button.dart';
 import 'package:bulk_order_frontend/shared/widgets/app_page.dart';
 import 'package:bulk_order_frontend/shared/widgets/app_shimmer.dart';
+import 'package:bulk_order_frontend/shared/widgets/quantity_stepper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 class CartPage extends StatelessWidget {
   const CartPage({super.key});
+
   @override
   Widget build(BuildContext context) => BlocProvider(
     create: (context) =>
@@ -24,49 +26,35 @@ class CartPage extends StatelessWidget {
 
 class _CartView extends StatelessWidget {
   const _CartView();
-  @override
-  Widget build(BuildContext context) => AppPage(
-    title: StringConstants.yourCart,
-    subtitle: StringConstants.cartChangeMessage,
-    children: [
-      const SectionLabel(StringConstants.currentCycle),
-      BlocBuilder<CartBloc, CartState>(
-        builder: (context, state) => switch (state) {
-          CartInitial() || CartLoading() => const AppListShimmer(count: 1),
-          CartFailure(:final message) => Text(message),
-          CartLoaded(:final cart) => _cartContent(context, cart),
 
-          CartCheckoutSuccess(:final order) => Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpace.x4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        StringConstants.finalOrderPlaced,
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: AppSpace.x2),
-                      if (order['id'] != null)
-                        Text('${StringConstants.orderNumberPrefix} ${order['id']}'),
-                      const SizedBox(height: AppSpace.x4),
-                      AppButton(
-                        label: StringConstants.orders,
-                        expand: true,
-                        onPressed: () => context.go(AppRoutes.orders),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-        },
-      ),
-      const SizedBox(height: AppSpace.x5),
-      _protection(),
-    ],
+  @override
+  Widget build(BuildContext context) => BlocListener<CartBloc, CartState>(
+    listenWhen: (_, state) => state is CartCheckoutSuccess,
+    listener: (context, state) => ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text(StringConstants.finalOrderPlaced)),
+    ),
+    child: AppPage(
+      title: StringConstants.yourCart,
+      subtitle: StringConstants.cartChangeMessage,
+      children: [
+        const SectionLabel(StringConstants.currentCycle),
+        BlocBuilder<CartBloc, CartState>(
+          builder: (context, state) => switch (state) {
+            CartInitial() ||
+            CartLoading() ||
+            CartCheckoutSuccess() => const AppListShimmer(count: 1),
+            CartFailure(:final message) => Text(message),
+            CartLoaded(:final cart) => _cartContent(context, cart),
+          },
+        ),
+        const SizedBox(height: AppSpace.x5),
+        _protection(),
+      ],
+    ),
   );
+
   Widget _cartContent(BuildContext context, Map<String, dynamic> cart) {
-    final items = (cart['items'] as List? ?? []);
+    final items = cart['items'] as List? ?? [];
     final cycleId = (cart['cycle_id'] as num?)?.toInt() ?? 0;
     if (items.isNotEmpty) {
       return Column(
@@ -93,9 +81,9 @@ class _CartView extends StatelessWidget {
             expand: true,
             onPressed: cycleId == 0
                 ? null
-                : () => context
-                    .read<CartBloc>()
-                    .add(CartCheckoutRequested(cycleId)),
+                : () => context.read<CartBloc>().add(
+                    CartCheckoutRequested(cycleId),
+                  ),
           ),
         ],
       );
@@ -133,58 +121,32 @@ class _CartView extends StatelessWidget {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text('${StringConstants.item} #$itemId'),
-      subtitle: Text('${StringConstants.quantity}: ${item['quantity']}'),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.remove_circle_outline, color: AppColors.danger600),
-            tooltip: StringConstants.remove,
-            onPressed: cycleId == 0
-                ? null
-                : () {
-                    final qty = (item['quantity'] as num?)?.toInt() ??
-                        int.tryParse(item['quantity']?.toString() ?? '') ?? 0;
-                    final newQty = qty - 1;
-                    if (newQty <= 0) {
-                      context.read<CartBloc>().add(
-                            CartItemRemoved(cycleId: cycleId, itemId: itemId),
-                          );
-                    } else {
-                      context.read<CartBloc>().add(
-                            CartItemQuantityUpdated(
-                              cycleId: cycleId,
-                              itemId: itemId,
-                              quantity: newQty.toString(),
-                            ),
-                          );
-                    }
-                  },
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: Text('${item['quantity']}', style: const TextStyle(fontWeight: FontWeight.w600)),
-          ),
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline),
-            tooltip: StringConstants.add,
-            onPressed: cycleId == 0
-                ? null
-                : () {
-                    final qty = (item['quantity'] as num?)?.toInt() ??
-                        int.tryParse(item['quantity']?.toString() ?? '') ?? 0;
-                    final newQty = qty + 1;
-                    context.read<CartBloc>().add(
-                          CartItemQuantityUpdated(
-                            cycleId: cycleId,
-                            itemId: itemId,
-                            quantity: newQty.toString(),
-                          ),
-                        );
-                  },
-          ),
-        ],
+      subtitle: const Text(StringConstants.quantity),
+      trailing: QuantityStepper(
+        value: _quantity(item['quantity']),
+        onChanged: (value) => _changeQuantity(context, cycleId, itemId, value),
       ),
+    );
+  }
+
+  int _quantity(Object? value) =>
+      num.tryParse(value?.toString() ?? '')?.round() ?? 0;
+
+  void _changeQuantity(
+    BuildContext context,
+    int cycleId,
+    int itemId,
+    int value,
+  ) {
+    if (cycleId == 0) return;
+    context.read<CartBloc>().add(
+      value == 0
+          ? CartItemRemoved(cycleId: cycleId, itemId: itemId)
+          : CartItemQuantityUpdated(
+              cycleId: cycleId,
+              itemId: itemId,
+              quantity: '$value',
+            ),
     );
   }
 

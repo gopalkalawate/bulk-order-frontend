@@ -83,7 +83,10 @@ class CartBloc extends Bloc<CartEvent, CartState> {
     }
   }
 
-  Future<void> _onCheckoutRequested(CartCheckoutRequested event, Emitter<CartState> emit) async {
+  Future<void> _onCheckoutRequested(
+    CartCheckoutRequested event,
+    Emitter<CartState> emit,
+  ) async {
     try {
       final order = await _repository.checkout(event.cycleId);
       emit(CartCheckoutSuccess(order));
